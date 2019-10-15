@@ -1,0 +1,23 @@
+{
+	"FileVersion" : 3,
+	
+	"FriendlyName" : "UTEditorPlus",
+	"Version" : 1,
+	"VersionName" : "1.0",
+	"CreatedBy" : "Chatouille",
+	"CreatedByURL" : "",
+	"EngineVersion" : "4.15.0",
+	"Description" : "UTEditorPlus",
+	"Category" : "UnrealTournament.Mutator",
+	"EnabledByDefault" : true,
+	"CanContainContent" : false,
+	
+	"Modules" :
+	[
+		{
+			"Name" : "UTEditorPlus",
+			"Type" : "Runtime",
+			"WhitelistPlatforms" : [ "Win32", "Win64", "Linux" ]
+		}
+	]
+}
