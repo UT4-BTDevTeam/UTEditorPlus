@@ -13,7 +13,8 @@ namespace UnrealBuildTool.Rules
 					"Core",
 					"CoreUObject",
                     "Engine",
-                    "BlueprintGraph"
+                    "BlueprintGraph",
+                    "InputCore"
                 }
 			);
 		}
