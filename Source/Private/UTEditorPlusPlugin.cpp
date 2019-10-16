@@ -119,9 +119,7 @@ void FUTEditorPlusPlugin::ModClasses(const TArray<FString>& Args)
 		{
 			TotalClasses++;
 
-			UClass* Class = Cast<UClass>(*Struct);
-			
-			if (!Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_AllowableBlueprintVariableType))
+			if (!Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_AllowableBlueprintVariableType) && !Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_NotAllowableBlueprintVariableType))
 			{
 				TotalClassesModified++;
 				Struct->SetMetaData(FBlueprintMetadata::MD_AllowableBlueprintVariableType, TEXT("true"));
@@ -139,15 +137,6 @@ void FUTEditorPlusPlugin::ModClasses(const TArray<FString>& Args)
 		}
 		
 	}
-	/*
-	if (UScriptStruct* ScriptStruct = Cast<UScriptStruct>(static_cast<UObject*>(It->Object)))
-	{
-		if (Packages.ContainsByPredicate([=](UPackage* Package) { return ScriptStruct->IsIn(Package); }) && ScriptStruct->GetCppStructOps())
-		{
-			ScriptStructs.Add(ScriptStruct);
-		}
-	}
-	*/
 
 	UE_LOG(UTEditorPlus, Log, TEXT("Total: %i structs - Turned visible: %i"), TotalStructs, TotalStructsModified);
 	UE_LOG(UTEditorPlus, Log, TEXT("Total: %i classes - Turned visible: %i"), TotalClasses, TotalClassesModified);
@@ -250,4 +239,25 @@ void FUTEditorPlusPlugin::AddUTBindings(const TArray<FString>& Args)
 void FUTEditorPlusPlugin::ShutdownModule()
 {
 	UE_LOG(LogLoad, Log, TEXT("[UTEditorPlus] ShutdownModule"));
+
+	if (ModPropsCommand)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(ModPropsCommand);
+		ModPropsCommand = nullptr;
+	}
+	if (ModFuncsCommand)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(ModFuncsCommand);
+		ModFuncsCommand = nullptr;
+	}
+	if (ModClassesCommand)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(ModClassesCommand);
+		ModClassesCommand = nullptr;
+	}
+	if (AddUTBindingsCommand)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(AddUTBindingsCommand);
+		AddUTBindingsCommand = nullptr;
+	}
 }
