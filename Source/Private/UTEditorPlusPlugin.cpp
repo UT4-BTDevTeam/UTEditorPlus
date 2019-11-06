@@ -12,18 +12,24 @@ class FUTEditorPlusPlugin : public IModuleInterface
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 
-	IConsoleCommand* ModPropsCommand = nullptr;
-	IConsoleCommand* ModFuncsCommand = nullptr;
-	IConsoleCommand* ModClassesCommand = nullptr;
-	IConsoleCommand* AddUTBindingsCommand = nullptr;
+	UUTEditorPlusConfig* Config;
 
-	void ModProps(const TArray<FString>& Args = {});
-	void ModFuncs(const TArray<FString>& Args = {});
-	void ModClasses(const TArray<FString>& Args = {});
+	TArray<IConsoleCommand*> Commands;
+
+	FString FactorCode_Begin(const TArray<FString>& Args, TArray<FString>& ConfigList, TCHAR* CmdName, TCHAR* ParamDesc, TCHAR* FullExample, TCHAR* PartialExample);
+	void FactorCode_End(const FString& Target, const TArray<FString>& Found, const TArray<FString>& Modified, TCHAR* ItemName, TArray<FString>& ConfigList);
+
+	void ModProps_Visible(const TArray<FString>& Args = {});
+	void ModProps_ReadWrite(const TArray<FString>& Args = {});
+	void ModFuncs_Callable(const TArray<FString>& Args = {});
+	void ModClasses_Visible(const TArray<FString>& Args = {});
+
 	void AddUTBindings(const TArray<FString>& Args = {});
+
+	bool bStartup;
 };
 
-IMPLEMENT_MODULE( FUTEditorPlusPlugin, UTEditorPlus )
+IMPLEMENT_MODULE(FUTEditorPlusPlugin, UTEditorPlus)
 
 //================================================
 // Startup
@@ -33,115 +39,200 @@ void FUTEditorPlusPlugin::StartupModule()
 {
 	UE_LOG(LogLoad, Log, TEXT("[UTEditorPlus] StartupModule"));
 
-	ModProps();
-	ModPropsCommand = IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModProps"), TEXT("test"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModProps));
-
-	ModFuncs();
-	ModFuncsCommand = IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModFuncs"), TEXT("test"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModFuncs));
-
-	ModClasses();
-	ModClassesCommand = IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModClasses"), TEXT("test"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModClasses));
+	Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModProps_Visible"), TEXT("Makes target properties blueprint-visible"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModProps_Visible)));
+	Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModProps_ReadWrite"), TEXT("Makes target properties blueprint-read-write"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModProps_ReadWrite)));
+	Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModFuncs_Callable"), TEXT("Makes target functions blueprint-callable"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModFuncs_Callable)));
+	Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("ModClasses_Visible"), TEXT("Makes target classes/structs blueprint-visible"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::ModClasses_Visible)));
 
 	AddUTBindings();
-	AddUTBindingsCommand = IConsoleManager::Get().RegisterConsoleCommand(TEXT("AddUTBindings"), TEXT("test"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::AddUTBindings));
+	Commands.Add(IConsoleManager::Get().RegisterConsoleCommand(TEXT("AddUTBindings"), TEXT("Generates all missing UT bindings in project settings"), FConsoleCommandWithArgsDelegate::CreateRaw(this, &FUTEditorPlusPlugin::AddUTBindings)));
+
+	Config = GetMutableDefault<UUTEditorPlusConfig>();
+	Config->SaveConfig();
+
+	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
+
+	bStartup = true;
+
+	for (const FString& Arg : Config->ModProps_Visible)
+	{
+		ModProps_Visible({ Arg });
+	}
+
+	for (const FString& Arg : Config->ModProps_ReadWrite)
+	{
+		ModProps_ReadWrite({ Arg });
+	}
+
+	for (const FString& Arg : Config->ModFuncs_Callable)
+	{
+		ModFuncs_Callable({ Arg });
+	}
+
+	for (const FString& Arg : Config->ModClasses_Visible)
+	{
+		ModClasses_Visible({ Arg });
+	}
+
+	bStartup = false;
+
+	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
 }
 
-void FUTEditorPlusPlugin::ModProps(const TArray<FString>& Args)
-{
-	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
-	UE_LOG(UTEditorPlus, Log, TEXT("Modding UProperties..."));
 
-	int32 TotalProps = 0;
-	int32 InvisProps = 0;
-	int32 ReadOnlyProps = 0;
+//================================================
+// Blueprint extended access
+//================================================
+
+// Parse arguments, send usage if necessary, handle the Remove case.
+FString FUTEditorPlusPlugin::FactorCode_Begin(const TArray<FString>& Args, TArray<FString>& ConfigList, TCHAR* CmdName, TCHAR* ParamDesc, TCHAR* FullExample, TCHAR* PartialExample)
+{
+	const FString& Target = (Args.Num() >= 1 ? Args[0] : TEXT(""));
+
+	if (Target.IsEmpty())
+	{
+		UE_LOG(UTEditorPlus, Log, TEXT("Usage: %s <Target> [Remove]"), CmdName);
+		UE_LOG(UTEditorPlus, Log, TEXT("Target can be a fully qualified %s like \"%s\""), ParamDesc, FullExample);
+		UE_LOG(UTEditorPlus, Log, TEXT("Or a partial %s like \"%s\", in which case it may be found in multiple places."), ParamDesc, PartialExample);
+		UE_LOG(UTEditorPlus, Log, TEXT("If additional parameter \"remove\" is passed, target is removed from modlist. Takes effect upon restart."));
+		return TEXT("");
+	}
+
+	bool bAll = (Target == TEXT("*"));
+
+	if (Args.Num() >= 2 && Args[1] == TEXT("remove"))
+	{
+		ConfigList.RemoveAll([&](const FString& Other) {
+			if (bAll || Other.Contains(Target))
+			{
+				UE_LOG(UTEditorPlus, Log, TEXT("Removed '%s' from the modlist"), *Other);
+				return true;
+			}
+			return false;
+		});
+		Config->SaveConfig();
+		return TEXT("");
+	}
+
+	return Target;
+}
+
+// Print result of command, update & save config if necessary
+void FUTEditorPlusPlugin::FactorCode_End(const FString& Target, const TArray<FString>& Found, const TArray<FString>& Modified, TCHAR* ItemName, TArray<FString>& ConfigList)
+{
+	UE_LOG(UTEditorPlus, Log, TEXT("Found: %i %s - Modified: %i"), Found.Num(), ItemName, Modified.Num());
+
+	if (Modified.Num() <= 20)
+	{
+		for (const FString& PathName : Modified)
+		{
+			UE_LOG(UTEditorPlus, Log, TEXT("Modified: %s"), *PathName);
+		}
+	}
+
+	if (!bStartup && Found.Num() > 0)
+	{
+		ConfigList.AddUnique(Target);
+		Config->SaveConfig();
+	}
+}
+
+// Prepare iteration
+#define PREPARE_ITERATION(UTYPE) \
+	if (Target.IsEmpty()) return; \
+	UE_LOG(UTEditorPlus, Log, TEXT("Looking up %s matching '%s' ..."), TEXT(UTYPE), *Target); \
+	bool bAll = (Target == TEXT("*")); \
+	bool bFullPath = Target.Contains(TEXT(":")); \
+	TArray<FString> Found; \
+	TArray<FString> Modified;
+
+void FUTEditorPlusPlugin::ModProps_Visible(const TArray<FString>& Args)
+{
+	FString Target = FactorCode_Begin(Args, Config->ModProps_Visible, TEXT("ModProps_Visible"), TEXT("property name"), TEXT("NetConnection:CurrentNetSpeed"), TEXT("CurrentNetSpeed"));
+	PREPARE_ITERATION("UProperties");
 	for (TObjectIterator<UProperty> Prop; Prop; ++Prop)
 	{
 		if (!(Prop->PropertyFlags & CPF_Parm))
 		{
-			TotalProps++;
-
-			if (!Prop->HasAnyPropertyFlags(CPF_BlueprintVisible))
+			if (bAll || (bFullPath ? Prop->GetPathName().Contains(Target) : Prop->GetName().Contains(Target)))
 			{
-				InvisProps++;
-				Prop->SetPropertyFlags(CPF_BlueprintVisible);
-
-				if (Prop->GetPathName() == TEXT("/Script/Engine.Brush:Brush"))
-					Prop->SetPropertyFlags(CPF_BlueprintReadOnly);	//crash fix
-			}
-			else if (Prop->HasAnyPropertyFlags(CPF_BlueprintReadOnly))
-			{
-				ReadOnlyProps++;
-
-				Prop->ClearPropertyFlags(CPF_BlueprintReadOnly);
-				Prop->RemoveMetaData(FBlueprintMetadata::MD_Private);
+				Found.Emplace(Prop->GetPathName());
+				if (!Prop->HasAnyPropertyFlags(CPF_BlueprintVisible))
+				{
+					Prop->SetPropertyFlags(CPF_BlueprintVisible | CPF_BlueprintReadOnly);
+					Modified.Emplace(Prop->GetPathName());
+				}
 			}
 		}
 	}
-
-	UE_LOG(UTEditorPlus, Log, TEXT("Total: %i properties - Turned visible: %i - Turned writeable: %i"), TotalProps, InvisProps, ReadOnlyProps);
-	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
+	FactorCode_End(Target, Found, Modified, TEXT("properties"), Config->ModProps_Visible);
 }
 
-void FUTEditorPlusPlugin::ModFuncs(const TArray<FString>& Args)
+void FUTEditorPlusPlugin::ModProps_ReadWrite(const TArray<FString>& Args)
 {
-	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
-	UE_LOG(UTEditorPlus, Log, TEXT("Modding UFunctions..."));
+	FString Target = FactorCode_Begin(Args, Config->ModProps_ReadWrite, TEXT("ModProps_ReadWrite"), TEXT("property name"), TEXT("NetConnection:CurrentNetSpeed"), TEXT("CurrentNetSpeed"));
+	PREPARE_ITERATION("UProperties");
+	for (TObjectIterator<UProperty> Prop; Prop; ++Prop)
+	{
+		if (!(Prop->PropertyFlags & CPF_Parm))
+		{
+			if (bAll || (bFullPath ? Prop->GetPathName().Contains(Target) : Prop->GetName().Contains(Target)))
+			{
+				Found.Emplace(Prop->GetPathName());
+				if (Prop->HasAnyPropertyFlags(CPF_BlueprintReadOnly))
+				{
+					Prop->ClearPropertyFlags(CPF_BlueprintReadOnly);
+					Prop->RemoveMetaData(FBlueprintMetadata::MD_Private);
+					Modified.Emplace(Prop->GetPathName());
+				}
+			}
+		}
+	}
+	FactorCode_End(Target, Found, Modified, TEXT("properties"), Config->ModProps_ReadWrite);
+}
 
-	int32 TotalFuncs = 0;
-	int32 TotalModified = 0;
+void FUTEditorPlusPlugin::ModFuncs_Callable(const TArray<FString>& Args)
+{
+	FString Target = FactorCode_Begin(Args, Config->ModFuncs_Callable, TEXT("ModFuncs_Callable"), TEXT("function name"), TEXT("UTCharacter:SetHatClass"), TEXT("SetHatClass"));
+	PREPARE_ITERATION("UFunctions");
 	for (TObjectIterator<UFunction> Func; Func; ++Func)
 	{
-		TotalFuncs++;
-
-		if (!Func->HasAnyFunctionFlags(FUNC_BlueprintCallable))
+		if (bAll || (bFullPath ? Func->GetPathName().Contains(Target) : Func->GetName().Contains(Target)))
 		{
-			TotalModified++;
-			Func->FunctionFlags |= FUNC_BlueprintCallable;
+			Found.Emplace(Func->GetPathName());
+			if (!Func->HasAnyFunctionFlags(FUNC_BlueprintCallable))
+			{
+				Func->FunctionFlags |= FUNC_BlueprintCallable;
+				Modified.Emplace(Func->GetPathName());
+			}
 		}
 	}
-
-	UE_LOG(UTEditorPlus, Log, TEXT("Total: %i functions - Turned callable: %i"), TotalFuncs, TotalModified);
-	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
+	FactorCode_End(Target, Found, Modified, TEXT("functions"), Config->ModFuncs_Callable);
 }
 
-void FUTEditorPlusPlugin::ModClasses(const TArray<FString>& Args)
+void FUTEditorPlusPlugin::ModClasses_Visible(const TArray<FString>& Args)
 {
-	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
-	UE_LOG(UTEditorPlus, Log, TEXT("Modding UClasses..."));
-
-	int32 TotalStructs = 0;
-	int32 TotalStructsModified = 0;
-	int32 TotalClasses = 0;
-	int32 TotalClassesModified = 0;
+	FString Target = FactorCode_Begin(Args, Config->ModClasses_Visible, TEXT("ModClasses_Visible"), TEXT("class name"), TEXT("/Script/UnrealTournament.UTLocalPlayer"), TEXT("LocalPlayer"));
+	PREPARE_ITERATION("UClasses and UStructs");
 	for (TObjectIterator<UStruct> Struct; Struct; ++Struct)
 	{
-		if (Struct->IsA(UClass::StaticClass()))
+		if (bAll || (bFullPath ? Struct->GetPathName().Contains(Target) : Struct->GetName().Contains(Target)))
 		{
-			TotalClasses++;
-
+			Found.Emplace(Struct->GetPathName());
 			if (!Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_AllowableBlueprintVariableType) && !Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_NotAllowableBlueprintVariableType))
 			{
-				TotalClassesModified++;
 				Struct->SetMetaData(FBlueprintMetadata::MD_AllowableBlueprintVariableType, TEXT("true"));
+				Modified.Emplace(Struct->GetPathName());
 			}
 		}
-		else
-		{
-			TotalStructs++;
-
-			if (!Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_AllowableBlueprintVariableType) && !Struct->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_NotAllowableBlueprintVariableType))
-			{
-				TotalStructsModified++;
-				Struct->SetMetaData(FBlueprintMetadata::MD_AllowableBlueprintVariableType, TEXT("true"));
-			}
-		}
-		
 	}
-
-	UE_LOG(UTEditorPlus, Log, TEXT("Total: %i structs - Turned visible: %i"), TotalStructs, TotalStructsModified);
-	UE_LOG(UTEditorPlus, Log, TEXT("Total: %i classes - Turned visible: %i"), TotalClasses, TotalClassesModified);
-	UE_LOG(UTEditorPlus, Log, TEXT("--------------------------------------------------------------------------------"));
+	FactorCode_End(Target, Found, Modified, TEXT("classes/structs"), Config->ModClasses_Visible);
 }
+
+
+//================================================
+// UT Bindings
+//================================================
 
 void FUTEditorPlusPlugin::AddUTBindings(const TArray<FString>& Args)
 {
@@ -240,24 +331,10 @@ void FUTEditorPlusPlugin::ShutdownModule()
 {
 	UE_LOG(LogLoad, Log, TEXT("[UTEditorPlus] ShutdownModule"));
 
-	if (ModPropsCommand)
+	for (IConsoleCommand* Command : Commands)
 	{
-		IConsoleManager::Get().UnregisterConsoleObject(ModPropsCommand);
-		ModPropsCommand = nullptr;
+		if (Command)
+			IConsoleManager::Get().UnregisterConsoleObject(Command);
 	}
-	if (ModFuncsCommand)
-	{
-		IConsoleManager::Get().UnregisterConsoleObject(ModFuncsCommand);
-		ModFuncsCommand = nullptr;
-	}
-	if (ModClassesCommand)
-	{
-		IConsoleManager::Get().UnregisterConsoleObject(ModClassesCommand);
-		ModClassesCommand = nullptr;
-	}
-	if (AddUTBindingsCommand)
-	{
-		IConsoleManager::Get().UnregisterConsoleObject(AddUTBindingsCommand);
-		AddUTBindingsCommand = nullptr;
-	}
+	Commands.Empty();
 }
