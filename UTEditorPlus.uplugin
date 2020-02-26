@@ -16,7 +16,7 @@
 	[
 		{
 			"Name" : "UTEditorPlus",
-			"Type" : "Runtime",
+			"Type" : "Editor",
 			"WhitelistPlatforms" : [ "Win32", "Win64", "Linux" ]
 		}
 	]
